@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <title>RPG Mini — Nhiệm vụ đầu tiên</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0b1022; --ink:#e5e7eb; --muted:#9ca3af;
+      --hud:#0b1223bd; --panel:#0f172a;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family:system-ui,Segoe UI,Roboto,sans-serif; color:var(--ink);
+      background:radial-gradient(1200px 700px at 50% -10%,#13223a 0%,#0b1022 40%,#050814 100%);
+      display:flex; flex-direction:column; align-items:center; gap:10px;
+    }
+    header{display:flex; gap:8px; align-items:center; padding:10px 14px; width:100%;
+      border-bottom:1px solid #111827; background:#0b1223aa; backdrop-filter: blur(8px);}
+    header h1{font-size:16px; margin:0 8px 0 0}
+    .chip{background:#0b1327; border:1px solid #20304e; padding:2px 8px; border-radius:999px; font-size:12px}
+    .wrap{display:flex; gap:14px; padding:14px; width:min(1100px,96vw)}
+    canvas{background:#1f2a20; border:2px solid #0a192f; border-radius:12px; image-rendering: pixelated;}
+    aside{width:280px; background:var(--panel); border:1px solid #1f2937; border-radius:12px; padding:12px; height:fit-content;}
+    aside h3{margin:6px 0 8px; font-size:14px}
+    .hud{position:absolute; inset:auto auto 16px 16px; display:flex; gap:10px; align-items:center;
+      background:var(--hud); border:1px solid #1f2937; padding:8px 10px; border-radius:12px}
+    .bar{position:relative; height:12px; width:160px; background:#111827; border-radius:999px; overflow:hidden}
+    .bar>span{position:absolute; inset:0; transform-origin:left center;}
+    .hp>span{background:linear-gradient(90deg,#ef4444,#f59e0b)}
+    .xp>span{background:linear-gradient(90deg,#22c55e,#a3e635)}
+    .msg{position:absolute; left:50%; transform:translateX(-50%); bottom:84px; background:#0b1223; border:1px solid #1f2937; padding:6px 10px; border-radius:8px; font-size:13px; display:none}
+    .panel{position:absolute; right:16px; top:70px; background:#0b1223; border:1px solid #1f2937; border-radius:12px; padding:10px; display:none}
+    .panel.visible{display:block}
+    .inv{display:grid; grid-template-columns:repeat(5,1fr); gap:8px}
+    .slot{height:44px; border:1px dashed #334155; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:12px}
+    .modal{position:absolute; inset:0; display:none; align-items:center; justify-content:center; background:rgba(0,0,0,.55)}
+    .modal.visible{display:flex}
+    .card{background:#0b1223; border:1px solid #1f2937; padding:16px; border-radius:14px; width:min(520px,92vw); text-align:center}
+    .btn{appearance:none; border:none; background:#0b1327; color:var(--ink); border:1px solid #20304e; padding:6px 10px; border-radius:10px; cursor:pointer}
+    .btn:hover{filter:brightness(1.07)}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>RPG Mini</h1>
+    <span class="chip">WASD: Di chuyển</span>
+    <span class="chip">Space: Đánh</span>
+    <span class="chip">E: Tương tác</span>
+    <span class="chip">I: Túi đồ</span>
+    <button class="btn" id="resetBtn">Chơi lại</button>
+  </header>
+
+  <div class="wrap">
+    <div style="position:relative">
+      <canvas id="game" width="896" height="560"></canvas>
+
+      <div class="hud">
+        <div>HP</div><div class="bar hp"><span id="hpFill" style="transform:scaleX(1)"></span></div>
+        <div>XP</div><div class="bar xp"><span id="xpFill" style="transform:scaleX(0)"></span></div>
+        <div>Lv <b id="lv">1</b></div>
+        <div>Điểm: <b id="score">0</b></div>
+        <div>Khoá: <b id="keys">0</b></div>
+      </div>
+
+      <div id="msg" class="msg"></div>
+    </div>
+
+    <aside>
+      <h3>Nhiệm vụ</h3>
+      <div id="questBox">Nói chuyện với <b>Trưởng Làng</b> (phím E) để nhận nhiệm vụ.</div>
+      <h3>Mẹo</h3>
+      <ul style="margin:6px 0 0 16px; padding:0; color:var(--muted); font-size:13px">
+        <li>Đứng gần NPC và nhấn E để nói chuyện.</li>
+        <li>Giết 3 Slime → nhặt <b>chìa</b> → mở <b>cổng</b> → tới <b>lối ra</b>.</li>
+        <li>Uống bình máu trong túi đồ (I) khi yếu.</li>
+      </ul>
+    </aside>
+  </div>
+
+  <div id="invPanel" class="panel">
+    <h3>Túi đồ</h3>
+    <div id="invGrid" class="inv"></div>
+  </div>
+
+  <div id="endModal" class="modal">
+    <div class="card">
+      <h2 id="endTitle">Hoàn tất!</h2>
+      <p id="endDesc">Bạn đã hoàn thành nhiệm vụ.</p>
+      <button class="btn" onclick="location.reload()">Chơi lại</button>
+    </div>
+  </div>
+
+  <script>
+  // ====== Canvas & Map ======
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const TILE = 32, W = canvas.width, H = canvas.height;
+
+  // 0 sàn, 1 tường, 2 cổng, 3 lối ra, 4 nước (chậm), 5 cây (chặn)
+  const mapW = 28, mapH = 17;
+  const map = new Array(mapW * mapH).fill(0);
+  // Viền tường
+  for (let x=0;x<mapW;x++){ map[x]=1; map[(mapH-1)*mapW+x]=1; }
+  for (let y=0;y<mapH;y++){ map[y*mapW]=1; map[y*mapW+mapW-1]=1; }
+  // Chướng ngại + cổng + lối ra
+  const walls=[[8,4],[9,4],[10,4],[11,4],[12,4],[13,4],[14,4],[15,4],[16,4],[8,12],[9,12],[10,12],[16,12],[17,12],[18,12],[19,12]];
+  for (const [x,y] of walls) map[y*mapW+x]=1;
+  map[9*mapW+14]=2;        // Cổng khóa
+  map[8*mapW+22]=3;        // Lối ra
+  for (const [x,y] of [[3,5],[4,5],[3,6],[4,6]]) map[y*mapW+x]=4; // nước
+  for (const [x,y] of [[20,6],[21,6],[21,7]]) map[y*mapW+x]=5;     // cây
+
+  const tileAt = (px,py) => {
+    const tx=Math.floor(px/TILE), ty=Math.floor(py/TILE);
+    if (tx<0||ty<0||tx>=mapW||ty>=mapH) return 1;
+    return map[ty*mapW+tx];
+  };
+  const blocked = (px,py) => {
+    const t=tileAt(px,py);
+    return t===1 || t===2 || t===5;
+  };
+
+  // ====== Utils ======
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const aabb=(x,y,w,h)=>({x,y,w,h});
+  const hitAABB=(a,b)=>a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y;
+
+  // ====== Entities ======
+  class Entity{
+    constructor(x,y){ this.x=x; this.y=y; this.w=22; this.h=22; this.dead=false; }
+    get box(){ return aabb(this.x-this.w/2, this.y-this.h/2, this.w, this.h); }
+    tryMove(mx,my){
+      const nx=this.x+mx, ny=this.y+my, hw=this.w/2-2, hh=this.h/2-2;
+      const pts=[[nx-hw,ny-hh],[nx+hw,ny-hh],[nx-hw,ny+hh],[nx+hw,ny+hh]];
+      if (pts.some(p=>blocked(p[0],p[1]))) return false;
+      this.x=nx; this.y=ny; return true;
+    }
+  }
+
+  class Player extends Entity{
+    constructor(x,y){ super(x,y); this.hp=100; this.exp=0; this.level=1; this.keys=0; this.score=0; this.dir={x:1,y:0}; this.cd=0; }
+    move(input){
+      const sp = tileAt(this.x,this.y)===4? 1.6 : 2.6; // chậm trên nước
+      const dx=(input.r?1:0)-(input.l?1:0), dy=(input.d?1:0)-(input.u?1:0);
+      const len=Math.hypot(dx,dy)||1, mx=(dx/len)*sp, my=(dy/len)*sp;
+      if (dx||dy) this.dir={x:dx/len,y:dy/len};
+      this.tryMove(mx,0); this.tryMove(0,my);
+    }
+    attack(){
+      if (this.cd>0) return;
+      this.cd=18;
+      const reach=22, size=18;
+      const hx=this.x+this.dir.x*reach, hy=this.y+this.dir.y*reach;
+      hitboxes.push(new Hitbox(hx,hy,size,size,9,10));
+    }
+    update(){ if(this.cd>0) this.cd--; }
+    gainExp(n){
+      this.exp+=n;
+      const need=50+(this.level-1)*30;
+      if (this.exp>=need){ this.exp-=need; this.level++; this.hp=Math.min(120,this.hp+20); this.score+=20; flashMsg(`Lên cấp ${this.level}!`, 900); }
+    }
+    draw(){
+      ctx.fillStyle='#3b82f6'; ctx.fillRect(this.x-11,this.y-11,22,22);
+      ctx.fillStyle='#0b1022'; ctx.fillRect(this.x-2+this.dir.x*6, this.y-6+this.dir.y*6, 4,4);
+    }
+  }
+
+  class Enemy extends Entity{
+    constructor(x,y,type='slime'){ super(x,y); this.type=type; this.hp= type==='slime'?28:60; this.sp= type==='slime'?1.4:1.1; this.color= type==='slime'? '#22c55e':'#a855f7'; }
+    update(){
+      const dx=player.x-this.x, dy=player.y-this.y, d=Math.hypot(dx,dy);
+      if (d<320){ const nx=dx/(d||1), ny=dy/(d||1); this.tryMove(nx*this.sp,0); this.tryMove(0,ny*this.sp); }
+      if (hitAABB(this.box, player.box)) player.hp=Math.max(0, player.hp-0.15);
+    }
+    hit(dmg,knx,kny){
+      this.hp-=dmg; this.tryMove(knx,kny);
+      if (this.hp<=0){ this.dead=true; dropLoot(this.x,this.y); player.score+=10; player.gainExp(this.type==='slime'?15:35); quest.onEnemyKilled(this.type); }
+    }
+    draw(){
+      if(this.dead) return;
+      ctx.fillStyle=this.color; ctx.fillRect(this.x-11,this.y-11,22,22);
+      const hpw=22*(this.hp/(this.type==='slime'?28:60));
+      ctx.fillStyle='#7f1d1d'; ctx.fillRect(this.x-11,this.y-16,22,3);
+      ctx.fillStyle='#22c55e'; ctx.fillRect(this.x-11,this.y-16,hpw,3);
+    }
+  }
+
+  class Hitbox{
+    constructor(x,y,w,h,life,dmg){ this.x=x; this.y=y; this.w=w; this.h=h; this.life=life; this.dmg=dmg; }
+    get box(){ return aabb(this.x-this.w/2,this.y-this.h/2,this.w,this.h); }
+    update(){ this.life--; }
+    draw(){ ctx.strokeStyle='#fde047'; ctx.strokeRect(this.x-this.w/2,this.y-this.h/2,this.w,this.h); }
+  }
+
+  class Item{
+    constructor(x,y,type){ this.x=x; this.y=y; this.type=type; this.dead=false; this.t=0; }
+    get box(){ return aabb(this.x-8,this.y-8,16,16); }
+    draw(){ this.t+=0.12; const bob=Math.sin(this.t)*2;
+      ctx.fillStyle= this.type==='key'? '#fbbf24' : this.type==='potion'? '#60a5fa' : '#eab308';
+      ctx.fillRect(this.x-8,this.y-8+bob,16,16);
+    }
+  }
+
+  class NPC{
+    constructor(x,y,name,dialog){ this.x=x; this.y=y; this.name=name; this.dialog=dialog; this.box=aabb(x-12,y-12,24,24); }
+    draw(){ ctx.fillStyle='#f59e0b'; ctx.fillRect(this.x-12,this.y-12,24,24);
+      ctx.fillStyle='#111827'; ctx.fillRect(this.x-3,this.y-6,6,6);
+      ctx.fillStyle='#e5e7eb'; ctx.font='12px system-ui'; ctx.textAlign='center'; ctx.fillText(this.name, this.x, this.y-18);
+    }
+  }
+
+  // ====== Game Data ======
+  const player = new Player(64, 64*2);
+  const enemies = [ new Enemy(640,150,'slime'), new Enemy(680,200,'slime'), new Enemy(740,260,'slime'), new Enemy(780,160,'mage') ];
+  const items = [ new Item(200,110,'key') ];
+  const npcs  = [ new NPC(120,120,'Trưởng Làng',['Xin chào!','Hãy diệt 3 Slime giúp làng!','Trở về khi xong nhé.']) ];
+  const hitboxes = [];
+
+  // ====== Quest ======
+  const quest = {
+    stage:0, targetKills:3, killed:0,
+    get text(){
+      if(this.stage===0) return 'Nói chuyện với Trưởng Làng (E) để nhận nhiệm vụ.';
+      if(this.stage===1) return `Tiêu diệt ${this.targetKills} Slime (${this.killed}/${this.targetKills}).`;
+      if(this.stage===2) return 'Nhặt chìa và mở cổng (E).';
+      if(this.stage===3) return 'Tới lối ra ở góc phải trên.';
+      return 'Nhiệm vụ hoàn tất!';
+    },
+    accept(){ if(this.stage===0){ this.stage=1; flashMsg('Nhận nhiệm vụ: Diệt 3 Slime',1000);} },
+    onEnemyKilled(type){ if(this.stage===1 && type==='slime'){ this.killed++; if(this.killed>=this.targetKills){ this.stage=2; flashMsg('Đã diệt đủ Slime! Tìm chìa mở cổng.',1200);} } },
+    openedGate(){ if(this.stage===2){ this.stage=3; flashMsg('Cổng đã mở! Tới lối ra.',1000);} },
+    finished(){ this.stage=4; showEnd('🎉 Chiến thắng!', 'Bạn đã giải cứu ngôi làng.'); }
+  };
+
+  // ====== UI Elements ======
+  const hpFill = document.getElementById('hpFill');
+  const xpFill = document.getElementById('xpFill');
+  const lvEl   = document.getElementById('lv');
+  const scoreEl= document.getElementById('score');
+  const keysEl = document.getElementById('keys');
+  const questBox=document.getElementById('questBox');
+  const invPanel=document.getElementById('invPanel');
+  const invGrid =document.getElementById('invGrid');
+  const msg     =document.getElementById('msg');
+  const endModal=document.getElementById('endModal');
+
+  let inventory=[];
+
+  function flashMsg(text, ms=900){
+    msg.textContent=text; msg.style.display='block';
+    clearTimeout(flashMsg._t); flashMsg._t=setTimeout(()=>msg.style.display='none', ms);
+  }
+  function renderInv(){
+    invGrid.innerHTML='';
+    for(let i=0;i<15;i++){
+      const slot=document.createElement('div'); slot.className='slot';
+      const it=inventory[i]; slot.textContent=it?it.type:'';
+      slot.onclick=()=>{ if(!it) return;
+        if(it.type==='potion'){ player.hp=Math.min(100, player.hp+35); inventory.splice(i,1); updateHUD(); flashMsg('Uống bình máu +35 HP', 900); }
+      };
+      invGrid.appendChild(slot);
+    }
+  }
+  function updateHUD(){
+    hpFill.style.transform=`scaleX(${clamp(player.hp/100,0,1)})`;
+    xpFill.style.transform=`scaleX(${clamp(player.exp/(50+(player.level-1)*30),0,1)})`;
+    lvEl.textContent=player.level; scoreEl.textContent=player.score; keysEl.textContent=player.keys;
+    questBox.innerHTML = quest.text;
+    renderInv();
+  }
+  function showEnd(title,desc){
+    document.getElementById('endTitle').textContent=title;
+    document.getElementById('endDesc').textContent=desc;
+    endModal.classList.add('visible');
+  }
+
+  // ====== Loot ======
+  function dropLoot(x,y){
+    const r=Math.random();
+    if(r<0.4) items.push(new Item(x,y,'potion'));
+    else if(r<0.55) items.push(new Item(x,y,'gold'));
+  }
+
+  // ====== Input ======
+  const kd={};
+  window.addEventListener('keydown', e=>{
+    const k=e.key.toLowerCase(); kd[k]=true;
+    if(k==='i') invPanel.classList.toggle('visible');
+    if(k===' ') e.preventDefault();
+  });
+  window.addEventListener('keyup', e=>{ kd[e.key.toLowerCase()]=false; });
+  document.getElementById('resetBtn').onclick=()=>location.reload();
+
+  // ====== Main Update ======
+  let gameOver=false, win=false;
+  function update(){
+    if (gameOver||win) return;
+
+    // điều khiển
+    const input={ l:kd['a'], r:kd['d'], u:kd['w'], d:kd['s'] };
+    player.move(input);
+    if(kd[' ']) player.attack();
+    player.update();
+
+    // quái
+    for (const en of enemies){ if(!en.dead) en.update(); }
+
+    // đòn đánh
+    for (let i=hitboxes.length-1;i>=0;i--){
+      const h=hitboxes[i]; h.update();
+      for (const en of enemies){ if(!en.dead && hitAABB(h.box, en.box)){ en.hit(h.dmg, (en.x-player.x)*0.15, (en.y-player.y)*0.15); } }
+      if (h.life<=0) hitboxes.splice(i,1);
+    }
+
+    // nhặt đồ & tương tác
+    for (const it of items){
+      if (!it.dead && hitAABB(player.box, it.box) && kd['e']){
+        it.dead=true;
+        if(it.type==='key'){ player.keys++; flashMsg('Nhặt 1 chìa',800); }
+        else if(it.type==='potion'){ inventory.push({type:'potion'}); flashMsg('Nhặt 1 bình máu',800); }
+        else if(it.type==='gold'){ player.score+=5; flashMsg('+5 vàng',800); }
+        updateHUD();
+      }
+    }
+
+    // nói chuyện NPC
+    for (const npc of npcs){
+      if (hitAABB(player.box, npc.box) && kd['e']){
+        if(quest.stage===0) quest.accept();
+        flashMsg(npc.dialog[(Math.random()*npc.dialog.length)|0], 900);
+      }
+    }
+
+    // mở cổng khi có chìa
+    if (kd['e']){
+      const tx=Math.floor(player.x/TILE), ty=Math.floor(player.y/TILE);
+      const around=[[1,0],[-1,0],[0,1],[0,-1]];
+      for (const [ax,ay] of around){
+        const i=(ty+ay)*mapW+(tx+ax);
+        if(i>=0&&i<map.length && map[i]===2 && player.keys>0){
+          map[i]=0; player.keys--; quest.openedGate(); updateHUD();
+        }
+      }
+    }
+
+    // lối ra
+    if (tileAt(player.x, player.y)===3 && quest.stage>=3){ quest.finished(); win=true; }
+
+    // thua
+    if (player.hp<=0){ gameOver=true; showEnd('💀 Thất bại', 'Bạn đã gục ngã… Hãy thử lại!'); }
+
+    updateHUD();
+  }
+
+  // ====== Draw ======
+  function draw(){
+    ctx.fillStyle='#13291f'; ctx.fillRect(0,0,W,H);
+
+    // map
+    for(let y=0;y<mapH;y++){
+      for(let x=0;x<mapW;x++){
+        const t=map[y*mapW+x], px=x*TILE, py=y*TILE;
+        if(t===1){ ctx.fillStyle='#0b3a2e'; ctx.fillRect(px,py,TILE,TILE); ctx.strokeStyle='#0f5138'; ctx.strokeRect(px+0.5,py+0.5,TILE-1,TILE-1); }
+        else if(t===2){ ctx.fillStyle='#3f3f46'; ctx.fillRect(px,py,TILE,TILE); ctx.fillStyle='#fbbf24'; ctx.fillRect(px+12,py+9,8,14); }
+        else if(t===3){ ctx.fillStyle='#14532d'; ctx.fillRect(px,py,TILE,TILE); ctx.strokeStyle='#22c55e'; ctx.strokeRect(px+4,py+4,TILE-8,TILE-8); }
+        else if(t===4){ ctx.fillStyle='#153a6b'; ctx.fillRect(px,py,TILE,TILE); ctx.strokeStyle='#1d4ed8'; ctx.strokeRect(px+1,py+1,TILE-2,TILE-2); }
+        else if(t===5){ ctx.fillStyle='#0d3418'; ctx.fillRect(px,py,TILE,TILE); ctx.fillStyle='#16a34a'; ctx.fillRect(px+8,py+4,6,20); ctx.fillRect(px+18,py+6,6,16); }
+        else { ctx.fillStyle='#144f37'; ctx.fillRect(px,py,TILE,TILE); }
+      }
+    }
+
+    // items
+    for (const it of items){ if(!it.dead) it.draw(); }
+
+    // npc
+    for (const npc of npcs){ npc.draw(); }
+
+    // enemies
+    for (const en of enemies){ en.draw(); }
+
+    // player
+    player.draw();
+
+    // hitboxes
+    for (const h of hitboxes){ h.draw(); }
+  }
+
+  // ====== Loop ======
+  let last=0;
+  function loop(ts){ const dt=(ts-last)/1000; last=ts; update(); draw(); requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
+
+  // init HUD
+  updateHUD();
+  </script>
+</body>
+</html>
